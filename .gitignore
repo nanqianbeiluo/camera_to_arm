@@ -140,10 +140,7 @@ cython_debug/
 hand_eye_calibration_data/
 
 # log folder
-log
-
-images
-
-calibration_image
-
-params
+log/
+images/
+calibration_image/
+params/
