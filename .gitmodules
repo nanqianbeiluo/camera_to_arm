@@ -1,0 +1,3 @@
+[submodule "blackboard"]
+	path = blackboard
+	url = https://e.coding.net/iqr/utils/blackboard.git
