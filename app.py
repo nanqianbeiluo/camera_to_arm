@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+from unittest import result
 from numpy import tri
 import yaml
 from flask import Flask, request
@@ -117,7 +118,7 @@ def bench_operate_request():
         # mc.ModbusStart()
         # mode = mc.GetArmMode()
     except Exception as e:
-        return_data = {"code": 0, "message": "start failed", "extra": e}
+        return_data = {"code": 0, "message": "start failed", "extra": str(e)}
         return return_data, 401
     
     finish_code = 0
@@ -165,65 +166,6 @@ def move_gripper_request():
             "error_code": "API_ERROR"
         }
         return error_result, 500
-
-@app.route('/api/control_gripper', methods=['POST'])
-def control_gripper_request():
-    """控制夹爪开合
-    
-    请求参数:
-        action: 动作类型，"open" 或 "close"
-    
-    Returns:
-        JSON: 执行结果
-    """
-    try:
-        json_data = request.json
-        if not json_data or 'action' not in json_data:
-            return {
-                "success": False,
-                "message": "缺少必需参数 'action'",
-                "error_code": "MISSING_PARAMETER"
-            }, 400
-        
-        action = json_data['action']
-        
-        # 调用控制器方法
-        result = bc.control_gripper(action=action)
-        
-        if result['success']:
-            return result, 200
-        else:
-            return result, 400
-            
-    except Exception as e:
-        error_result = {
-            "success": False,
-            "message": f"API调用异常: {str(e)}",
-            "error_code": "API_ERROR"
-        }
-        return error_result, 500
-
-@app.route('/api/camera_status', methods=['GET'])
-def camera_status_request():
-    """获取相机状态
-    
-    Returns:
-        JSON: 相机连接状态信息
-    """
-    try:
-        from camera.camera import get_camera
-        camera = get_camera()
-        status = camera.get_connection_status()
-        return {
-            "success": True,
-            "camera_status": status
-        }, 200
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"获取相机状态失败: {str(e)}",
-            "error_code": "CAMERA_STATUS_ERROR"
-        }, 500
 
 @app.route('/api/capture_image', methods=['POST'])
 def capture_image_request():
@@ -307,7 +249,7 @@ def move_arm_request():
         }
         return error_result, 500
 
-@app.route('/api/pick_sequence_from_queue', methods=['POST'])
+@app.route('/api/pick_up', methods=['POST'])
 def pick_sequence_from_queue_request():
     """
     从TCP队列中获取坐标并执行完整的抓取序列
@@ -329,7 +271,7 @@ def pick_sequence_from_queue_request():
         recognition_scheme = json_data.get('command', 'start1')
         
         # 调用控制器方法
-        result = bc.execute_pick_sequence_from_queue(approach_height, pick_height, timeout, recognition_scheme)
+        result = bc.pick_up(approach_height, pick_height, timeout, recognition_scheme)
 
         if result['success']:
             return result, 200
@@ -439,27 +381,50 @@ def send_start_command_request():
         }
         return error_result, 500
 
-@app.route('/api/tcp_status', methods=['GET'])
-def get_tcp_status_request():
+@app.route('/api/clear_arm_error', methods=['POST'])
+def clear():
     """
-    获取TCP客户端连接状态
-    
-    Returns:
-        JSON: TCP连接状态信息
+    清除机械臂警报
+
+    Return:
+        JSON:执行结果
     """
     try:
-        # 调用控制器方法
-        result = bc.get_tcp_status()
-        
+        result = bc.clera_arm_error()
+
         if result['success']:
             return result, 200
         else:
             return result, 400
-            
+
     except Exception as e:
         error_result = {
             "success": False,
-            "message": f"获取TCP状态API调用异常: {str(e)}",
+            "message": f"清除警报失败: {str(e)}",
+            "error_code": "API_ERROR"
+        }
+        return error_result, 500
+
+@app.route('/api/arm_status', methods=['GET'])
+def arm_status():
+    """
+    获取机械臂位姿状态
+
+    Return:
+        JSON:执行结果
+    """
+    try:
+        result = bc.get_arm_status()
+
+        if result['success']:
+            return result, 200
+        else:
+            return result, 400
+
+    except Exception as e:
+        error_result = {
+            "success": False,
+            "message": f"获取机械臂状态失败: {str(e)}",
             "error_code": "API_ERROR"
         }
         return error_result, 500

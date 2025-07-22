@@ -86,6 +86,9 @@ class BenchContorller:
         self.parse_error_count = 0  # 解析错误计数器
         self.max_parse_errors = 5   # 最大连续解析错误次数
         
+        # 加载识别方案配置
+        self.load_recognition_schemes()
+        
         # 启动TCP客户端
         self.start_tcp_client()
     
@@ -102,10 +105,96 @@ class BenchContorller:
             self.hand_eye_matrix = None
             self.camera_matrix = None
             self.dist_coeffs = None
+    
+    def load_recognition_schemes(self):
+        """加载识别方案配置"""
+        try:
+            config_path = os.path.join(os.path.dirname(__file__), 'recognition_schemes.json')
+            with open(config_path, 'r', encoding='utf-8') as file:
+                self.recognition_schemes = json.load(file)
+            print("识别方案配置加载成功")
+        except Exception as e:
+            print(f"加载识别方案配置失败: {e}")
+            # 使用默认配置
+            self.recognition_schemes = {
+                "start1": {
+                    "gripper_open_pos": 33,
+                    "gripper_close_pos": 35,
+                    "arm_rotation": 270,
+                    "origin_point": [-0.0268, -363.0517, 772.0800, 180, 0, 270],
+                    "default_pick_height": 446.0,
+                    "target_z_default": 500
+                },
+                "start2": {
+                    "gripper_open_pos": 16.8,
+                    "gripper_close_pos": 25.5,
+                    "arm_rotation": 90,
+                    "origin_point": [93.0233, -370.0210, 772.0800, 180, 0, 90],
+                    "default_pick_height": 525.0,
+                    "target_z_default": 600
+                }
+            }
 
     def check_arm_connection(self):
         """检查机械臂连接状态"""
         return self.arm_controller.is_connected
+
+    def clera_arm_error(self):
+        """清除机械臂警报"""
+        result = {"success": False, "message": ""}
+        self.arm_controller.dashboard.ClearError()
+        if self.arm_controller.dashboard.RobotMode == 9:
+            result["message"] = "清除警报失败"
+        else:
+            result["success"] = True
+            result["message"] = "清除警报成功"
+        return result
+    
+    def _move_with_timeout(self, point, limits, timeout_seconds=5.0):
+        """带超时的机械臂移动方法
+        
+        Args:
+            point: 目标位置
+            limits: 误差限制
+            timeout_seconds: 超时时间（秒）
+            
+        Returns:
+            dict: 包含success和message的结果字典
+        """
+        import threading
+        import time
+        
+        result = {"success": False, "message": ""}
+        
+        def move_task():
+            try:
+                move_success = self.arm_controller.move_l(point, limits)
+                if move_success:
+                    result["success"] = True
+                    result["message"] = "移动成功"
+                else:
+                    result["message"] = "机械臂移动失败"
+            except Exception as e:
+                result["message"] = f"移动过程中发生异常: {str(e)}"
+        
+        # 创建并启动移动线程
+        move_thread = threading.Thread(target=move_task)
+        move_thread.daemon = True
+        move_thread.start()
+        
+        # 等待线程完成或超时
+        move_thread.join(timeout=timeout_seconds)
+        
+        if move_thread.is_alive():
+            # 超时情况
+            result["success"] = False
+            result["message"] = f"移动操作超时（{timeout_seconds}秒）"
+            # self.arm_controller.dashboard.dashboard.RobotMode = 9
+            self.arm_controller.dashboard.Stop()
+            # 注意：在Windows上，我们无法强制终止线程，但可以标记超时
+            print(f"警告：移动操作超时，但线程可能仍在运行")
+        
+        return result
     
     def start_tcp_client(self):
         """启动TCP客户端连接到外部服务器"""
@@ -224,8 +313,6 @@ class BenchContorller:
                 
         print("TCP客户端工作线程已退出")
     
-
-    
     def send_start_command(self, command="start", clear_queue=True):
         """
         向TCP服务器发送指定的命令字符串
@@ -278,58 +365,6 @@ class BenchContorller:
                 "error_code": "SEND_COMMAND_ERROR"
             }
     
-    def get_tcp_status(self):
-        """
-        获取TCP客户端连接状态
-        
-        Returns:
-            dict: TCP连接状态信息
-        """
-        try:
-            queue_size = self.coordinate_queue.qsize()
-            
-            # 获取队列中最新的几条数据（不移除）
-            recent_data = []
-            temp_queue = Queue()
-            try:
-                # 临时取出所有数据
-                all_data = []
-                while not self.coordinate_queue.empty():
-                    try:
-                        data = self.coordinate_queue.get_nowait()
-                        all_data.append(data)
-                    except Empty:
-                        break
-                
-                # 保留最新的3条数据用于显示
-                recent_data = all_data[-3:] if len(all_data) >= 3 else all_data
-                
-                # 将所有数据放回队列
-                for data in all_data:
-                    self.coordinate_queue.put(data)
-                    
-            except Exception:
-                pass
-            
-            return {
-                "success": True,
-                "tcp_running": self.tcp_client_running,
-                "socket_connected": self.tcp_client_socket is not None,
-                "server_host": self.tcp_server_host,
-                "server_port": self.tcp_server_port,
-                "queue_size": queue_size,
-                "parse_error_count": self.parse_error_count,
-                "thread_alive": self.tcp_client_thread.is_alive() if self.tcp_client_thread else False,
-                "recent_coordinates": recent_data,
-                "last_update": time.time()
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"获取TCP状态失败: {str(e)}",
-                "error_code": "GET_STATUS_ERROR"
-            }
-    
     def get_latest_coordinates(self, timeout=1.0):
         """
         从队列中获取最新的坐标数据
@@ -350,7 +385,94 @@ class BenchContorller:
             print(f"当前TCP连接状态: 运行={self.tcp_client_running}, Socket连接={self.tcp_client_socket is not None}")
             return None
     
-    def execute_pick_sequence_from_queue(self, approach_height: float = 700.0, pick_height: float = 446.0, timeout: float = 10.0, recognition_scheme: str = "start1") -> Dict[str, Any]:
+    def get_sorted_first_coordinate(self, timeout=1.0, recognition_scheme="start1"):
+        """
+        从队列中获取所有坐标数据，根据识别方案的旋转角度进行排序，
+        然后返回排在第一个的坐标数据
+        
+        Args:
+            timeout: 等待超时时间（秒）
+            recognition_scheme: 识别方案，用于获取旋转角度
+            
+        Returns:
+            排序后第一个坐标数据字典或None
+        """
+        try:
+            print(f"正在获取并排序坐标数据，队列当前大小: {self.coordinate_queue.qsize()}")
+            
+            # 如果队列为空，等待数据
+            if self.coordinate_queue.empty():
+                print(f"队列为空，等待{timeout}秒获取数据...")
+                try:
+                    first_data = self.coordinate_queue.get(timeout=timeout)
+                    # 将第一个数据放回队列
+                    self.coordinate_queue.put(first_data)
+                except Empty:
+                    print(f"在{timeout}秒内未从队列中获取到坐标数据")
+                    return None
+            
+            # 获取队列中的所有坐标数据
+            all_coordinates = []
+            temp_queue = Queue()
+            
+            # 取出所有数据
+            while not self.coordinate_queue.empty():
+                try:
+                    data = self.coordinate_queue.get_nowait()
+                    all_coordinates.append(data)
+                except Empty:
+                    break
+            
+            if not all_coordinates:
+                print("队列中没有坐标数据")
+                return None
+            
+            print(f"获取到{len(all_coordinates)}个坐标数据，开始排序...")
+            
+            # 根据识别方案的旋转角度确定排序规则，增加3mm误差容忍度
+            # 先按Y轴分组（3mm误差内认为同一行），再按X轴排序
+            def get_y_group(y_coord, tolerance=3.0):
+                """将Y坐标按3mm误差分组"""
+                return round(y_coord / tolerance) * tolerance
+            
+            # 获取识别方案的旋转角度
+            scheme_config = self.recognition_schemes.get(recognition_scheme, {})
+            origin_point = scheme_config.get('origin_point', [0, 0, 0, 0, 0, 270])
+            rotation_angle = origin_point[-1]  # 获取原点数组的最后一个数值（旋转角度）
+            
+            if rotation_angle == 270:
+                # 旋转角度为270时：先按Y轴从大到小分组，组内X轴从大到小
+                sorted_coordinates = sorted(all_coordinates, 
+                    key=lambda coord: (-get_y_group(coord['y']), -coord['x']))
+                print(f"使用270度旋转排序规则：先按Y轴从大到小分组（3mm容忍度），组内X轴从大到小")
+            elif rotation_angle == 90:
+                # 旋转角度为90时：先按Y轴从大到小分组，组内X轴从小到大
+                sorted_coordinates = sorted(all_coordinates, 
+                    key=lambda coord: (-get_y_group(coord['y']), coord['x']))
+                print(f"使用90度旋转排序规则：先按Y轴从大到小分组（3mm容忍度），组内X轴从小到大")
+            else:
+                # 默认方案：先按Y轴从大到小分组，组内X轴从小到大
+                sorted_coordinates = sorted(all_coordinates, 
+                    key=lambda coord: (-get_y_group(coord['y']), coord['x']))
+                print(f"使用默认排序规则（旋转角度{rotation_angle}）：先按Y轴从大到小分组（3mm容忍度），组内X轴从小到大")
+            
+            # 获取排序后的第一个坐标
+            first_coordinate = sorted_coordinates[0]
+            
+            # 将排序后的坐标重新放回队列（保持排序顺序）
+            for coord in sorted_coordinates:
+                self.coordinate_queue.put(coord)
+            
+            print(f"排序完成，第一个坐标: X={first_coordinate['x']:.3f}, Y={first_coordinate['y']:.3f}, Z={first_coordinate['z']:.3f}")
+            print(f"排序顺序（前3个）: {[(f'X={c["x"]:.3f}, Y={c["y"]:.3f}') for c in sorted_coordinates[:3]]}")
+            
+            return first_coordinate
+            
+        except Exception as e:
+            print(f"获取排序坐标数据时发生错误: {e}")
+            return None
+    
+    def pick_up(self, approach_height: float = 700.0, pick_height: float = 446.0, timeout: float = 10.0, recognition_scheme: str = "start1") -> Dict[str, Any]:
         """
         从队列中获取坐标数据并执行抓取序列（整合版本）
         
@@ -372,27 +494,22 @@ class BenchContorller:
                     "error_code": "ARM_NOT_CONNECTED"
                 }
             
-            # 根据识别方案设置不同的参数
-            if recognition_scheme == "start1":
-                gripper_open_pos = 33
-                gripper_close_pos = 35
-                arm_rotation = 270
-                origin_point = [-0.0268, -363.0517, 772.0800, 180, 0, 270]
-                default_pick_height = 446.0
-                target_z_default = 500
-            elif recognition_scheme == "start2":
-                gripper_open_pos = 16.8
-                gripper_close_pos = 25.5
-                arm_rotation = 90
-                origin_point = [93.0233, -370.0210, 772.0800, 180, 0, 90]
-                default_pick_height = 525.0
-                target_z_default = 600
-            else:
+            # 从配置文件中获取识别方案的参数
+            scheme_config = self.recognition_schemes.get(recognition_scheme)
+            if scheme_config is None:
                 return {
                     "success": False,
                     "message": f"不支持的识别方案: {recognition_scheme}",
                     "error_code": "UNSUPPORTED_SCHEME"
                 }
+            
+            # 从配置中获取参数
+            gripper_open_pos = scheme_config["gripper_open_pos"]
+            gripper_close_pos = scheme_config["gripper_close_pos"]
+            arm_rotation = scheme_config["arm_rotation"]
+            origin_point = scheme_config["origin_point"]
+            default_pick_height = scheme_config["default_pick_height"]
+            target_z_default = scheme_config["target_z_default"]
             
             # 如果使用默认pick_height，则根据识别方案调整
             if pick_height == 0:  # 默认值
@@ -401,11 +518,11 @@ class BenchContorller:
             # 步骤0: 移动到初始点位（原点坐标）
             print(f"步骤0: 移动到初始点位 ({origin_point[0]:.3f}, {origin_point[1]:.3f}, {origin_point[2]:.3f})")
             limits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-            move_result = self.arm_controller.move_l(origin_point, limits)
-            if not move_result:
+            move_result = self._move_with_timeout(origin_point, limits, 60.0)
+            if not move_result["success"]:
                 return {
                     "success": False,
-                    "message": "移动到初始点位失败",
+                    "message": f"移动到初始点位失败: {move_result['message']}",
                     "error_code": "INITIAL_MOVE_FAILED"
                 }
             time.sleep(0.5)
@@ -425,10 +542,10 @@ class BenchContorller:
                 # 给服务器一些时间来响应命令并发送数据
                 time.sleep(0.5)
             
-            # 从队列中获取坐标数据
+            # 从队列中获取排序后的第一个坐标数据
             print(f"等待坐标数据，超时时间: {timeout}秒")
             
-            coordinate_data = self.get_latest_coordinates(timeout=timeout)
+            coordinate_data = self.get_sorted_first_coordinate(timeout=timeout, recognition_scheme=recognition_scheme)
             
             if coordinate_data is None:
                 return {
@@ -446,20 +563,24 @@ class BenchContorller:
             
             # 步骤1: 打开夹爪
             print("步骤1: 打开夹爪")
-            gripper_result = self.gripper_control_move(position=gripper_open_pos)
+            gripper_result = self.gripper_control_move(position=gripper_open_pos, timeout=5)
             if not gripper_result["success"]:
-                return gripper_result
+                return {
+                    "success": False,
+                    "message": f"打开夹爪失败或超时: {gripper_result.get('message', '未知错误')}",
+                    "error_code": "GRIPPER_OPEN_FAILED"
+                }
             time.sleep(1.0)
             
             # 步骤2: 移动到目标上方的安全位置
             print(f"步骤2: 移动到安全接近位置 ({target_x:.3f}, {target_y:.3f}, {approach_height:.2f})")
             point = [target_x, target_y, approach_height, 180, 0, arm_rotation]  # 使用接收到的X,Y坐标
             limits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-            move_result = self.arm_controller.move_l(point, limits)
-            if not move_result:
+            move_result = self._move_with_timeout(point, limits, 30.0)
+            if not move_result["success"]:
                 return {
                     "success": False,
-                    "message": "移动到接近位置失败",
+                    "message": f"移动到接近位置失败: {move_result['message']}",
                     "error_code": "APPROACH_MOVE_FAILED"
                 }
             time.sleep(1.0)
@@ -469,31 +590,35 @@ class BenchContorller:
             print(f"步骤3: 下降到抓取位置 ({target_x:.3f}, {target_y:.3f}, {actual_pick_height:.2f})")
             point = [target_x, target_y, actual_pick_height, 180, 0, arm_rotation]
             limits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-            move_result = self.arm_controller.move_l(point, limits)
-            if not move_result:
+            move_result = self._move_with_timeout(point, limits, 30.0)
+            if not move_result["success"]:
                 return {
                     "success": False,
-                    "message": "下降到抓取位置失败",
+                    "message": f"下降到抓取位置失败: {move_result['message']}",
                     "error_code": "PICK_MOVE_FAILED"
                 }
             time.sleep(0.5)
             
             # 步骤4: 关闭夹爪进行抓取
             print("步骤4: 关闭夹爪进行抓取")
-            gripper_result = self.gripper_control_move(position=gripper_close_pos)
+            gripper_result = self.gripper_control_move(position=gripper_close_pos, timeout=5)
             if not gripper_result["success"]:
-                return gripper_result
+                return {
+                    "success": False,
+                    "message": f"关闭夹爪失败或超时: {gripper_result.get('message', '未知错误')}",
+                    "error_code": "GRIPPER_CLOSE_FAILED"
+                }
             time.sleep(1.0)
             
             # 步骤5: 提升到安全高度
             print(f"步骤5: 提升到安全高度 ({target_x:.3f}, {target_y:.3f}, {approach_height:.2f})")
             point = [target_x, target_y, approach_height, 180, 0, arm_rotation]
             limits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-            move_result = self.arm_controller.move_l(point, limits)
-            if not move_result:
+            move_result = self._move_with_timeout(point, limits, 30.0)
+            if not move_result["success"]:
                 return {
                     "success": False,
-                    "message": "提升到安全高度失败",
+                    "message": f"提升到安全高度失败: {move_result['message']}",
                     "error_code": "LIFT_MOVE_FAILED"
                 }
             time.sleep(0.5)
@@ -501,11 +626,11 @@ class BenchContorller:
             # 步骤6: 回到原点
             print(f"步骤6: 回到原点")
             limits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-            move_result = self.arm_controller.move_l(origin_point, limits)
-            if not move_result:
+            move_result = self._move_with_timeout(origin_point, limits, 30.0)
+            if not move_result["success"]:
                 return {
                     "success": False,
-                    "message": "回到原点失败",
+                    "message": f"回到原点失败: {move_result['message']}",
                     "error_code": "RETURN_ORIGIN_FAILED"
                 }
             time.sleep(0.5)
@@ -568,6 +693,23 @@ class BenchContorller:
                     "error_code": "ARM_NOT_CONNECTED"
                 }
             
+            # 从配置文件中获取识别方案的参数
+            scheme_config = self.recognition_schemes.get(recognition_scheme)
+            if scheme_config is None:
+                return {
+                    "success": False,
+                    "message": f"不支持的识别方案: {recognition_scheme}",
+                    "error_code": "UNSUPPORTED_SCHEME"
+                }
+            
+            # 从配置中获取参数
+            gripper_open_pos = scheme_config["gripper_open_pos"]
+            # gripper_close_pos = scheme_config["gripper_close_pos"]
+            arm_rotation = scheme_config["arm_rotation"]
+            origin_point = scheme_config["origin_point"]
+            # default_pick_height = scheme_config["default_pick_height"]
+            target_z_default = scheme_config["target_z_default"]
+            
             # 抓取开始时发送指定的识别方案命令
             print(f"抓取开始，发送识别方案: {recognition_scheme}")
             start_result = self.send_start_command(command=recognition_scheme, clear_queue=True)
@@ -583,10 +725,10 @@ class BenchContorller:
                 # 给服务器一些时间来响应命令并发送数据
                 time.sleep(0.5)
             
-            # 从队列中获取坐标数据
+            # 从队列中获取排序后的第一个坐标数据
             print(f"等待坐标数据，超时时间: {timeout}秒")
             
-            coordinate_data = self.get_latest_coordinates(timeout=timeout)
+            coordinate_data = self.get_sorted_first_coordinate(timeout=timeout, recognition_scheme=recognition_scheme)
             
             if coordinate_data is None:
                 return {
@@ -598,19 +740,19 @@ class BenchContorller:
             # 提取坐标数据
             target_x = coordinate_data["x"]
             target_y = coordinate_data["y"]
-            target_z = 500
+            target_z = target_z_default
             
             print(f"开始执行放回序列，接收到的坐标: ({target_x:.3f}, {target_y:.3f})，使用识别方案: {recognition_scheme}")
                        
             # 步骤1: 移动到目标上方的安全位置
             print(f"步骤1: 移动到安全接近位置 ({target_x:.3f}, {target_y:.3f}, {approach_height:.2f})")
-            point = [target_x, target_y, approach_height, 180, 0, 270]  # 使用接收到的X,Y坐标
+            point = [target_x, target_y, approach_height, 180, 0, arm_rotation]  # 使用接收到的X,Y坐标
             limits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-            move_result = self.arm_controller.move_l(point, limits)
-            if not move_result:
+            move_result = self._move_with_timeout(point, limits, 5.0)
+            if not move_result["success"]:
                 return {
                     "success": False,
-                    "message": "移动到接近位置失败",
+                    "message": f"移动到接近位置失败: {move_result['message']}",
                     "error_code": "APPROACH_MOVE_FAILED"
                 }
             time.sleep(1.0)
@@ -618,48 +760,52 @@ class BenchContorller:
             # 步骤2: 下降到抓取位置（可以使用接收到的Z坐标或指定的pick_height）
             actual_pick_height = min(pick_height, target_z) if target_z > 0 else pick_height
             print(f"步骤2: 下降到抓取位置 ({target_x:.3f}, {target_y:.3f}, {actual_pick_height:.2f})")
-            point = [target_x, target_y, actual_pick_height, 180, 0, 270]
+            point = [target_x, target_y, actual_pick_height, 180, 0, arm_rotation]
             limits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-            move_result = self.arm_controller.move_l(point, limits)
-            if not move_result:
+            move_result = self._move_with_timeout(point, limits, 5.0)
+            if not move_result["success"]:
                 return {
                     "success": False,
-                    "message": "下降到抓取位置失败",
+                    "message": f"下降到抓取位置失败: {move_result['message']}",
                     "error_code": "PICK_MOVE_FAILED"
                 }
             time.sleep(0.5)
             
             # 步骤3: 打开夹爪进行放置
             print("步骤3: 打开夹爪进行放置")
-            gripper_result = self.gripper_control_move(position=33)
+            gripper_result = self.gripper_control_move(position=gripper_open_pos, timeout=5)
             if not gripper_result["success"]:
-                return gripper_result
+                return {
+                    "success": False,
+                    "message": f"打开夹爪失败或超时: {gripper_result.get('message', '未知错误')}",
+                    "error_code": "GRIPPER_OPEN_FAILED"
+                }
             time.sleep(1.0)
             
             # 步骤4: 提升到安全高度
             print(f"步骤4: 提升到安全高度 ({target_x:.3f}, {target_y:.3f}, {approach_height:.2f})")
-            point = [target_x, target_y, approach_height, 180, 0, 270]
+            point = [target_x, target_y, approach_height, 180, 0, arm_rotation]
             limits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-            move_result = self.arm_controller.move_l(point, limits)
-            if not move_result:
+            move_result = self._move_with_timeout(point, limits, 5.0)
+            if not move_result["success"]:
                 return {
                     "success": False,
-                    "message": "提升到安全高度失败",
+                    "message": f"提升到安全高度失败: {move_result['message']}",
                     "error_code": "LIFT_MOVE_FAILED"
                 }
             time.sleep(0.5)
 
             # 步骤5: 回到原点
             print(f"步骤5: 回到原点")
-            point = [-0.0268, -363.0517, 772.0800, 180, 0, 270]
+            point = origin_point
             # point = [-20.0003, -390.0005, 763.1149, 180, 0, 270]
             limits = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-            move_result = self.arm_controller.move_l(point, limits)
-            if not move_result:
+            move_result = self._move_with_timeout(point, limits, 5.0)
+            if not move_result["success"]:
                 return {
                     "success": False,
-                    "message": "回到原点失败失败",
-                    "error_code": "LIFT_MOVE_FAILED"
+                    "message": f"回到原点失败: {move_result['message']}",
+                    "error_code": "RETURN_ORIGIN_FAILED"
                 }
             time.sleep(0.5)
             
@@ -741,6 +887,28 @@ class BenchContorller:
                 "error_code": "GRIPPER_CONTROL_ERROR"
             }
     
+    def get_arm_status(self):
+        """
+        获取机械臂位姿和状态
+        """
+        try:
+            status = self.arm_controller.dashboard.RobotMode()
+            pose = self.arm_controller.dashboard.GetPose()
+            print(f"机械臂状态: {str(status)}")
+            print(f"机械臂位姿：{str(pose)}")
+            return {
+                "success": True,
+                "message": "获取机械臂状态成功",
+                "robot_mode": status,
+                "pose": pose
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取机械臂状态失败: {str(e)}",
+                "error_code": "ARM_STATUS_ERROR"
+            }
+
     def capture_and_save_image(self, save_directory: str = "images") -> Dict[str, Any]:
         """
         单独控制相机拍照并按日期保存图片到指定目录
@@ -1255,7 +1423,10 @@ class BenchContorller:
             while True:
                 if time.time() - start_time > timeout:
                     print("夹爪操作超时")
-                    return False
+                    return {
+                        "success": False,
+                        "message": f"夹爪操作超时（{timeout}秒）"
+                    }
                 
                 try:
                     # 安全地检查夹爪状态，处理可能的Modbus通信异常
@@ -1293,7 +1464,7 @@ class BenchContorller:
             print(f"夹爪操作失败: {e}")
             return {
                     "success": False,
-                    "message": "夹爪移动失败"
+                    "message": f"夹爪移动失败: {str(e)}"
                 }
 
 
@@ -1545,7 +1716,10 @@ class BenchContorller:
             while not reached:
                 if time.time() - start_time > timeout:
                     print("夹爪推压操作超时")
-                    return False
+                    return {
+                        "success": False,
+                        "message": f"夹爪推压操作超时（{timeout}秒）"
+                    }
                     
                 try:
                     reached = self.grip_axis.is_reached()
@@ -1556,10 +1730,16 @@ class BenchContorller:
                     continue
                     
                 time.sleep(0.05)
-            return True
+            return {
+                "success": True,
+                "message": "夹爪推压成功"
+            }
         except Exception as e:
             print(f"夹爪推压操作失败: {e}")
-            return False
+            return {
+                "success": False,
+                "message": f"夹爪推压失败: {str(e)}"
+            }
 
     # def gripper_control_move(self, position):
     #     try:

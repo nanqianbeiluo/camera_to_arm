@@ -1,0 +1,26 @@
+{
+  "start1": {
+    "gripper_open_pos": 30,
+    "gripper_close_pos": 35,
+    "arm_rotation": 270,
+    "origin_point": [-0.0268, -363.0517, 772.0800, 180, 0, 270],
+    "default_pick_height": 446.0,
+    "target_z_default": 500
+  },
+  "start2": {
+    "gripper_open_pos": 16.8,
+    "gripper_close_pos": 25.5,
+    "arm_rotation": 90,
+    "origin_point": [93.0233, -370.0210, 772.0800, 180, 0, 90],
+    "default_pick_height": 525.0,
+    "target_z_default": 600
+  },
+  "start3": {
+    "gripper_open_pos": 33,
+    "gripper_close_pos": 38,
+    "arm_rotation": 270,
+    "origin_point": [93.0233, -370.0210, 772.0800, 180, 0, 270],
+    "default_pick_height": 465.0,
+    "target_z_default": 600
+  }
+}
