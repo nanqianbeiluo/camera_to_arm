@@ -295,7 +295,7 @@ def put_back_request():
         timeout: 等待坐标数据的超时时间（秒），默认5.0
         approach_height: 接近高度（毫米），默认700.0
         pick_height:放回高度（毫米），默认446
-        command: 识别方案，可以是"start", "start1", "start2"等，默认"start1"
+        command: 识别方案，可以是"back1", "back2", "back3"等，默认"back1"
     
     Returns:
         JSON: 执行结果
@@ -305,7 +305,7 @@ def put_back_request():
         timeout = json_data.get('timeout', 5.0)
         approach_height = json_data.get('approach_height', 700)
         pick_height = json_data.get('pick_height', 0)
-        recognition_scheme = json_data.get('command', 'start1')
+        recognition_scheme = json_data.get('command', 'back1')
         
         # 调用控制器方法
         result = bc.put_back(approach_height, pick_height, timeout, recognition_scheme)
@@ -352,31 +352,6 @@ def send_tcp_command_request():
         error_result = {
             "success": False,
             "message": f"发送TCP命令API调用异常: {str(e)}",
-            "error_code": "API_ERROR"
-        }
-        return error_result, 500
-
-@app.route('/api/send_start_command', methods=['POST'])
-def send_start_command_request():
-    """
-    向TCP服务器发送start命令并清空队列数据（保持向后兼容）
-    
-    Returns:
-        JSON: 执行结果
-    """
-    try:
-        # 调用控制器方法
-        result = bc.send_start_command()
-        
-        if result['success']:
-            return result, 200
-        else:
-            return result, 400
-            
-    except Exception as e:
-        error_result = {
-            "success": False,
-            "message": f"发送start命令API调用异常: {str(e)}",
             "error_code": "API_ERROR"
         }
         return error_result, 500

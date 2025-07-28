@@ -36,6 +36,20 @@
 
 ## 识别方案配置
 
+### 方案分类
+
+系统支持两类识别方案：
+
+**抓取方案（start系列）：**
+- `start1`：270度旋转角度，适用于坩埚等从右侧开始抓取的场景
+- `start2`：90度旋转角度，适用于玻璃管等从左侧开始抓取的场景
+- `start3`：270度旋转角度，特殊抓取场景配置
+
+**放回方案（back系列）：**
+- `back1`：270度旋转角度，对应start1的放回操作
+- `back2`：90度旋转角度，对应start2的放回操作
+- `back3`：270度旋转角度，对应start3的放回操作
+
 ### 配置文件
 
 系统使用 `recognition_schemes.json` 配置文件来管理不同识别方案的参数，包括：
@@ -52,7 +66,7 @@
 ```json
 {
   "start1": {
-    "gripper_open_pos": 33,
+    "gripper_open_pos": 30,
     "gripper_close_pos": 35,
     "arm_rotation": 270,
     "origin_point": [-0.0268, -363.0517, 772.0800, 180, 0, 270],
@@ -65,6 +79,38 @@
     "arm_rotation": 90,
     "origin_point": [93.0233, -370.0210, 772.0800, 180, 0, 90],
     "default_pick_height": 525.0,
+    "target_z_default": 600
+  },
+  "start3": {
+    "gripper_open_pos": 33,
+    "gripper_close_pos": 38,
+    "arm_rotation": 270,
+    "origin_point": [93.0233, -370.0210, 772.0800, 180, 0, 270],
+    "default_pick_height": 465.0,
+    "target_z_default": 600
+  },
+  "back1": {
+    "gripper_open_pos": 30,
+    "gripper_close_pos": 35,
+    "arm_rotation": 270,
+    "origin_point": [-0.0268, -363.0517, 772.0800, 180, 0, 270],
+    "default_pick_height": 446.0,
+    "target_z_default": 500
+  },
+  "back2": {
+    "gripper_open_pos": 16.8,
+    "gripper_close_pos": 25.5,
+    "arm_rotation": 90,
+    "origin_point": [93.0233, -370.0210, 772.0800, 180, 0, 90],
+    "default_pick_height": 525.0,
+    "target_z_default": 600
+  },
+  "back3": {
+    "gripper_open_pos": 33,
+    "gripper_close_pos": 38,
+    "arm_rotation": 270,
+    "origin_point": [93.0233, -370.0210, 772.0800, 180, 0, 270],
+    "default_pick_height": 465.0,
     "target_z_default": 600
   }
 }
@@ -137,13 +183,13 @@ else:
 由于A、B两点Y轴差值小于3mm，被归为同一行；C、D两点同样被归为同一行。
 
 **配置示例：**
-- start1方案：origin_point最后一个参数为270
-- start2方案：origin_point最后一个参数为90
+- start1、back1、start3、back3方案：origin_point最后一个参数为270
+- start2、back2方案：origin_point最后一个参数为90
 
-**旋转角度270度排序结果（start1方案）：** B → A → D → C
+**旋转角度270度排序结果（start1、back1、start3、back3方案）：** B → A → D → C
 （第一行：右到左，第二行：右到左）
 
-**旋转角度90度排序结果（start2方案）：** A → B → C → D
+**旋转角度90度排序结果（start2、back2方案）：** A → B → C → D
 （第一行：左到右，第二行：左到右）
 
 **优势：**
@@ -198,7 +244,25 @@ else:
     "timeout": 10.0,           // 等待坐标数据超时时间（秒）
     "approach_height": 700.0,  // 接近高度（毫米）
     "pick_height": 446.0,      // 放置高度（毫米）
-    "command": "start1"        // 识别方案
+    "command": "back1"        // 识别方案（back1、back2、back3）
+}
+```
+
+**响应示例：**
+```json
+{
+    "success": true,
+    "message": "放回序列执行成功",
+    "recognition_scheme": "back1",
+    "received_coordinates": {
+        "x": 123.456,
+        "y": 234.567,
+        "z": 500
+    },
+    "executed_positions": {
+        "approach_height": 700.0,
+        "pick_height": 446.0
+    }
 }
 ```
 
@@ -253,7 +317,7 @@ curl -X POST http://localhost:5000/api/put_back \
     "timeout": 10.0,
     "approach_height": 700.0,
     "pick_height": 446.0,
-    "command": "start1"
+    "command": "back1"
   }'
 ```
 
@@ -268,3 +332,33 @@ curl -X POST http://localhost:5000/api/put_back \
 │ - 数据发送       │            │ - 队列管理      │            │ - 超时保护      │
 └─────────────────┘           └─────────────────┘           └─────────────────┘
 ```
+
+## 使用建议
+
+### 识别方案选择
+
+**抓取操作建议：**
+- 使用 `start1` 进行坩埚抓取（270度旋转，右到左排序）
+- 使用 `start2` 进行玻璃管抓取（90度旋转，左到右排序）
+- 使用 `start3` 进行特殊物体抓取（270度旋转）
+
+**放回操作建议：**
+- 使用 `back1` 进行坩埚放回（对应start1的逆操作）
+- 使用 `back2` 进行玻璃管放回（对应start2的逆操作）
+- 使用 `back3` 进行特殊物体放回（对应start3的逆操作）
+
+### 最佳实践
+
+1. **方案配对**：抓取和放回操作应使用对应的方案（如start1配back1）
+2. **参数调优**：根据实际物体尺寸调整夹爪开合位置和抓取高度
+3. **超时设置**：根据操作复杂度适当调整超时时间
+4. **安全高度**：确保接近高度足够避免碰撞
+5. **坐标校准**：定期校准视觉系统确保坐标准确性
+
+### 故障排除
+
+**常见问题：**
+- 坐标数据超时：检查TCP连接和视觉服务器状态
+- 机械臂移动失败：检查目标位置是否在工作范围内，是否连接到机械臂
+- 夹爪操作失败：检查夹爪参数配置和物理状态
+- 排序异常：验证识别方案配置和旋转角度设置

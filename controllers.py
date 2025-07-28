@@ -297,6 +297,7 @@ class BenchContorller:
                         
             except Exception as e:
                 print(f"TCP客户端连接失败: {e}")
+                # time.sleep(0.1)
                 
             # 关闭当前连接
             if self.tcp_client_socket:
@@ -313,12 +314,12 @@ class BenchContorller:
                 
         print("TCP客户端工作线程已退出")
     
-    def send_start_command(self, command="start", clear_queue=True):
+    def send_start_command(self, command="start1", clear_queue=True):
         """
         向TCP服务器发送指定的命令字符串
         
         Args:
-            command: 要发送的命令，可以是"start", "start1", "start2"等，默认为"start"
+            command: 要发送的命令，可以是"start1", "back1", "start2", "back2"等
             clear_queue: 是否清空队列中的旧数据，默认为True
         
         Returns:
@@ -385,7 +386,7 @@ class BenchContorller:
             print(f"当前TCP连接状态: 运行={self.tcp_client_running}, Socket连接={self.tcp_client_socket is not None}")
             return None
     
-    def get_sorted_first_coordinate(self, timeout=1.0, recognition_scheme="start1"):
+    def get_sorted_first_coordinate(self, timeout=1.0, recognition_scheme="back1"):
         """
         从队列中获取所有坐标数据，根据识别方案的旋转角度进行排序，
         然后返回排在第一个的坐标数据
@@ -671,15 +672,15 @@ class BenchContorller:
             }
     
 
-    def put_back(self, approach_height: float = 700.0, pick_height: float = 446.0, timeout: float = 10.0, recognition_scheme: str = "start1") -> Dict[str, Any]:
+    def put_back(self, approach_height: float = 700.0, pick_height: float = 446.0, timeout: float = 10.0, recognition_scheme: str = "back1") -> Dict[str, Any]:
         """
-        从队列中获取坐标数据并执行抓取序列
+        从队列中获取坐标数据并执行放回序列
         
         Args:
             approach_height: 接近高度（毫米），在目标上方的安全高度
-            pick_height: 抓取高度（毫米），实际抓取时的Z坐标
+            pick_height: 放回高度（毫米），实际放回时的Z坐标
             timeout: 等待坐标数据的超时时间（秒）
-            recognition_scheme: 识别方案，可以是"start", "start1", "start2"等，默认为"start1"
+            recognition_scheme: 识别方案，可以是"back1", "back2", "back3"等，默认为"back1"
         
         Returns:
             执行结果字典
